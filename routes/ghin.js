@@ -1,4 +1,4 @@
-/**
+**
  * routes/ghin.js
  * ──────────────────────────────────────────────────────────────────────────
  * Proxy routes between Caddie app and GHIN API.
@@ -90,13 +90,21 @@ router.post('/login', async (req, res, next) => {
     }
 
     // Auto-detect state from the logged-in golfer's profile
-    const state = golfer?.State || golfer?.state || '';
-    console.log(`Login success — golfer state: "${state}"`);
+    // Log ALL golfer fields so we can find the correct state field name
+    console.log('GHIN golfer fields:', JSON.stringify(golfer, null, 2));
+
+    const state = golfer?.State || golfer?.state
+               || golfer?.home_state || golfer?.HomeState
+               || golfer?.golf_association_state || golfer?.AssociationState
+               || golfer?.address_state || '';
+
+    console.log(`Login success — detected state: "${state}"`);
 
     return res.json({
       token,
-      state,  // returned so client can scope all future searches to this state
-      golfer: golfer ? normalizeGolfer(golfer) : null
+      state,
+      golfer: golfer ? normalizeGolfer(golfer) : null,
+      _debug_golfer_keys: golfer ? Object.keys(golfer) : []  // temp: shows all available fields
     });
 
   } catch (err) {
