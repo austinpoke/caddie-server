@@ -126,6 +126,10 @@ router.get('/search', async function(req, res, next) {
     params.set('page', '1');
     params.set('status', 'Active');
 
+    // GHIN requires: last_name + state, OR last_name + country, OR association_id, OR club_id
+    var state        = (req.query.state || '').trim();
+    var association_id = (req.query.association_id || '').trim();
+
     var isGhinNumber = /^\d+$/.test(q);
     if (isGhinNumber) {
       params.set('golfer_id', q);
@@ -135,6 +139,16 @@ router.get('/search', async function(req, res, next) {
       var firstName = parts.length > 1 ? parts[0] : '';
       params.set('last_name', lastName);
       if (firstName) params.set('first_name', firstName);
+
+      // Add required scope — use association_id if available, otherwise state
+      if (association_id) {
+        params.set('association_id', association_id);
+      } else if (state) {
+        params.set('state', state);
+      } else {
+        // Fallback to country if neither available
+        params.set('country', 'US');
+      }
     }
 
     var searchUrl = GHIN_BASE + '/golfers/search.json?' + params.toString();
