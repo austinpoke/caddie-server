@@ -1,4 +1,5 @@
 /**
+/v2
  * routes/ghin.js
  * Proxy routes between Caddie app and GHIN API.
  *
