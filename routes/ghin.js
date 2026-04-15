@@ -144,7 +144,7 @@ router.get('/search', async function(req, res, next) {
 
     var isGhinNumber = /^\d+$/.test(q);
     if (isGhinNumber) {
-      // GHIN number search â no filters needed
+      // GHIN number â search by ID only, no other filters
       params.set('golfer_id', q);
       params.set('sorting_criteria', 'id');
     } else {
@@ -153,11 +153,8 @@ router.get('/search', async function(req, res, next) {
       var firstName = parts.length > 1 ? parts[0] : '';
       params.set('last_name', lastName);
       if (firstName) params.set('first_name', firstName);
-
-      // Scope by association_id (more reliable than state code in GHIN API)
-      if (association_id) {
-        params.set('golf_association_id', association_id);
-      }
+      // Note: GHIN search.json does not support golf_association_id or state filters
+      // Results are naturally scoped by the authenticated user's association
     }
 
     var searchUrl = GHIN_BASE + '/golfers/search.json?' + params.toString();
