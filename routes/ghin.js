@@ -1,4 +1,4 @@
-/**
+**
  * routes/ghin.js
  * Proxy routes between Caddie app and GHIN API.
  *
@@ -166,10 +166,13 @@ router.get('/search', async function(req, res, next) {
     );
 
     if (!result.ok) {
+      // Log the full GHIN error body â this tells us exactly what is wrong
+      console.error('GHIN 400 body: ' + JSON.stringify(result.body));
+      console.error('Token (first 20 chars): ' + token.slice(0,20));
       if (result.status === 401) {
         return res.status(401).json({ error: true, message: 'GHIN token expired. Please log in again.' });
       }
-      return res.status(result.status).json({ error: true, message: 'GHIN search failed' });
+      return res.status(result.status).json({ error: true, message: 'GHIN search failed', ghin_body: result.body });
     }
 
     var rawGolfers = result.body && result.body.golfers ? result.body.golfers : [];
