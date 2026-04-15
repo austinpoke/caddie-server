@@ -71,11 +71,12 @@ router.post('/login', async (req, res, next) => {
     );
 
     if (!ok) {
-      console.warn(`GHIN login failed (HTTP ${status}):`, body);
+      console.warn(`GHIN login failed (HTTP ${status}):`, JSON.stringify(body));
       return res.status(401).json({
         error: true,
-        message: 'GHIN authentication failed. Check your email/GHIN number and password.',
-        ghin_status: status
+        message: 'GHIN authentication failed.',
+        ghin_status: status,
+        ghin_response: body  // temporary debug — remove after fixing
       });
     }
 
@@ -83,9 +84,11 @@ router.post('/login', async (req, res, next) => {
     const golfer = body?.golfer_user?.golfers?.[0] || null;
 
     if (!token) {
+      console.warn('GHIN returned ok but no token. Body:', JSON.stringify(body));
       return res.status(401).json({
         error: true,
-        message: 'GHIN did not return a token. Check your credentials.'
+        message: 'GHIN did not return a token.',
+        ghin_response: body  // temporary debug — remove after fixing
       });
     }
 
