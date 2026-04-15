@@ -175,8 +175,13 @@ router.get('/search', async function(req, res, next) {
       return res.status(result.status).json({ error: true, message: 'GHIN search failed' });
     }
 
-    var golfers = (result.body && result.body.golfers ? result.body.golfers : []).map(normalizeGolfer);
-    console.log('GHIN search returned ' + golfers.length + ' results');
+    var rawGolfers = result.body && result.body.golfers ? result.body.golfers : [];
+    console.log('GHIN search raw response keys: ' + JSON.stringify(Object.keys(result.body)));
+    console.log('GHIN search golfer count: ' + rawGolfers.length);
+    if (rawGolfers.length === 0) {
+      console.log('GHIN full response: ' + JSON.stringify(result.body).slice(0, 500));
+    }
+    var golfers = rawGolfers.map(normalizeGolfer);
     return res.json({ golfers: golfers });
 
   } catch (err) {
