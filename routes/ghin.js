@@ -1,5 +1,4 @@
 /**
-/v2
  * routes/ghin.js
  * Proxy routes between Caddie app and GHIN API.
  *
@@ -46,7 +45,7 @@ function normalizeGolfer(g) {
     handicap_index:   hcp,
     club_name:        g.club_name  || g.ClubName  || '',
     association_name: g.golf_association_name || g.association_name || '',
-    state:            g.State || g.state || '',
+    state:            g.primary_club_state || g.State || g.state || '',
     status:           g.Status || g.status || 'Active',
     low_hi:           g.low_hi_display || g.low_hi || null,
     revision_date:    g.hi_last_revised || null
@@ -90,26 +89,22 @@ router.post('/login', async function(req, res, next) {
       return res.status(401).json({ error: true, message: 'GHIN did not return a token.' });
     }
 
-    // Log all golfer keys so we can find the state field
+    // State field confirmed as primary_club_state
+    // Extract state and association info from golfer profile
+    var state          = '';
+    var association_id = '';
     if (golfer) {
-      console.log('GHIN golfer keys: ' + JSON.stringify(Object.keys(golfer)));
-      console.log('GHIN golfer data: ' + JSON.stringify(golfer));
+      state          = golfer.primary_club_state || golfer.State || golfer.state || '';
+      association_id = golfer.primary_golf_association_id || golfer.golf_association_id || '';
     }
 
-    // Try every possible state field GHIN might use
-    var state = '';
-    if (golfer) {
-      state = golfer.State || golfer.state || golfer.home_state ||
-              golfer.HomeState || golfer.address_state ||
-              golfer.golf_association_state || golfer.stat || '';
-    }
-
-    console.log('Login success - state detected: "' + state + '"');
+    console.log('Login success - state: "' + state + '" assoc_id: "' + association_id + '"');
 
     return res.json({
-      token:  token,
-      state:  state,
-      golfer: golfer ? normalizeGolfer(golfer) : null
+      token:          token,
+      state:          state,
+      association_id: String(association_id),
+      golfer:         golfer ? normalizeGolfer(golfer) : null
     });
 
   } catch (err) {
@@ -136,6 +131,9 @@ router.get('/search', async function(req, res, next) {
       return res.status(400).json({ error: true, message: 'Query parameter ?q is required' });
     }
 
+    // Also accept association_id for tighter scoping
+    var association_id = (req.query.association_id || '').trim();
+
     var params = new URLSearchParams({
       per_page: per_page,
       page: 1,
@@ -144,24 +142,26 @@ router.get('/search', async function(req, res, next) {
       order: 'ASC'
     });
 
-    if (state) {
-      params.set('state', state);
-    }
-
     var isGhinNumber = /^\d+$/.test(q);
     if (isGhinNumber) {
+      // GHIN number search â no filters needed
       params.set('golfer_id', q);
       params.set('sorting_criteria', 'id');
-      params.delete('state');
     } else {
       var parts     = q.split(/\s+/);
       var lastName  = parts[parts.length - 1];
       var firstName = parts.length > 1 ? parts[0] : '';
       params.set('last_name', lastName);
       if (firstName) params.set('first_name', firstName);
+
+      // Scope by association_id (more reliable than state code in GHIN API)
+      if (association_id) {
+        params.set('golf_association_id', association_id);
+      }
     }
 
-    console.log('GHIN search: "' + q + '" state="' + state + '"');
+    var searchUrl = GHIN_BASE + '/golfers/search.json?' + params.toString();
+    console.log('GHIN search URL: ' + searchUrl);
 
     var result = await ghinFetch(
       GHIN_BASE + '/golfers/search.json?' + params.toString(),
