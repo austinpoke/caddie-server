@@ -1,13 +1,11 @@
-**
+/**
  * routes/ghin.js
- * ──────────────────────────────────────────────────────────────────────────
  * Proxy routes between Caddie app and GHIN API.
  *
- * Routes:
- *   POST /api/ghin/login          — authenticate, returns token + golfer state
- *   GET  /api/ghin/search         — search golfers by name or GHIN (state-scoped)
- *   GET  /api/ghin/golfer/:ghin   — fetch single golfer
- *   GET  /api/ghin/health         — token validity check
+ * POST /api/ghin/login        - authenticate, returns token + state
+ * GET  /api/ghin/search       - search golfers by name or GHIN (state-scoped)
+ * GET  /api/ghin/golfer/:ghin - fetch single golfer
+ * GET  /api/ghin/health       - token validity check
  */
 
 const express = require('express');
@@ -16,33 +14,35 @@ const router  = express.Router();
 
 const GHIN_BASE = process.env.GHIN_API_BASE || 'https://api.ghin.com/api/v1';
 
-// Helper: fetch from GHIN and parse JSON
-async function ghinFetch(url, options = {}) {
-  const res  = await fetch(url, options);
-  const text = await res.text();
-  let body;
+// Fetch from GHIN and parse JSON
+async function ghinFetch(url, options) {
+  options = options || {};
+  var res  = await fetch(url, options);
+  var text = await res.text();
+  var body;
   try { body = JSON.parse(text); }
-  catch { body = { raw: text }; }
-  return { ok: res.ok, status: res.status, body };
+  catch (e) { body = { raw: text }; }
+  return { ok: res.ok, status: res.status, body: body };
 }
 
-// Helper: extract Bearer token from Authorization header
+// Extract Bearer token from Authorization header
 function extractToken(req) {
-  const auth = req.headers['authorization'] || '';
-  return auth.startsWith('Bearer ') ? auth.slice(7) : null;
+  var auth = req.headers['authorization'] || '';
+  return auth.indexOf('Bearer ') === 0 ? auth.slice(7) : null;
 }
 
-// Helper: normalize a raw GHIN golfer object into a consistent shape
+// Normalize a raw GHIN golfer object
 function normalizeGolfer(g) {
-  const firstName = g.FirstName  || g.first_name  || '';
-  const lastName  = g.LastName   || g.last_name   || '';
-  const fullName  = g.player_name || `${firstName} ${lastName}`.trim();
+  var firstName = g.FirstName  || g.first_name  || '';
+  var lastName  = g.LastName   || g.last_name   || '';
+  var fullName  = g.player_name || (firstName + ' ' + lastName).trim();
+  var hcp = parseFloat(g.handicap_index !== undefined ? g.handicap_index : (g.HandicapIndex !== undefined ? g.HandicapIndex : 0));
   return {
     name:             fullName,
     first_name:       firstName,
     last_name:        lastName,
     ghin:             String(g.ghin || g.GhinNumber || g.ghin_number || g.id || ''),
-    handicap_index:   parseFloat(g.handicap_index ?? g.HandicapIndex ?? 0),
+    handicap_index:   hcp,
     club_name:        g.club_name  || g.ClubName  || '',
     association_name: g.golf_association_name || g.association_name || '',
     state:            g.State || g.state || '',
@@ -52,59 +52,63 @@ function normalizeGolfer(g) {
   };
 }
 
-// ── POST /api/ghin/login ────────────────────────────────────────────────────
+// POST /api/ghin/login
 // Body: { email_or_ghin, password }
-// Returns: { token, golfer, state }
-//   state is auto-detected from the logged-in golfer's profile
-//   and returned so the client can use it to scope future searches
-router.post('/login', async (req, res, next) => {
+// Returns: { token, state, golfer }
+router.post('/login', async function(req, res, next) {
   try {
-    const { email_or_ghin, password } = req.body;
+    var email_or_ghin = req.body.email_or_ghin;
+    var password      = req.body.password;
+
     if (!email_or_ghin || !password) {
       return res.status(400).json({ error: true, message: 'email_or_ghin and password are required' });
     }
 
-    const { ok, status, body } = await ghinFetch(
-      `${GHIN_BASE}/golfer_login.json`,
+    var result = await ghinFetch(
+      GHIN_BASE + '/golfer_login.json',
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
         body: JSON.stringify({
-          user: { email_or_ghin, password, remember_me: 'true' },
+          user: { email_or_ghin: email_or_ghin, password: password, remember_me: 'true' },
           token: '123'
         })
       }
     );
 
-    if (!ok) {
-      console.warn(`GHIN login failed (HTTP ${status}):`, JSON.stringify(body));
-      return res.status(401).json({ error: true, message: 'GHIN authentication failed. Check your credentials.', ghin_status: status });
+    if (!result.ok) {
+      console.warn('GHIN login failed HTTP ' + result.status + ': ' + JSON.stringify(result.body));
+      return res.status(401).json({ error: true, message: 'GHIN authentication failed. Check your credentials.' });
     }
 
-    const token  = body?.golfer_user?.golfer_user_token;
-    const golfer = body?.golfer_user?.golfers?.[0] || null;
+    var golfer_user = result.body && result.body.golfer_user ? result.body.golfer_user : null;
+    var token  = golfer_user ? golfer_user.golfer_user_token : null;
+    var golfer = golfer_user && golfer_user.golfers && golfer_user.golfers.length > 0 ? golfer_user.golfers[0] : null;
 
     if (!token) {
-      console.warn('GHIN returned ok but no token:', JSON.stringify(body));
       return res.status(401).json({ error: true, message: 'GHIN did not return a token.' });
     }
 
-    // Auto-detect state from the logged-in golfer's profile
-    // Log ALL golfer fields so we can find the correct state field name
-    console.log('GHIN golfer fields:', JSON.stringify(golfer, null, 2));
+    // Log all golfer keys so we can find the state field
+    if (golfer) {
+      console.log('GHIN golfer keys: ' + JSON.stringify(Object.keys(golfer)));
+      console.log('GHIN golfer data: ' + JSON.stringify(golfer));
+    }
 
-    const state = golfer?.State || golfer?.state
-               || golfer?.home_state || golfer?.HomeState
-               || golfer?.golf_association_state || golfer?.AssociationState
-               || golfer?.address_state || '';
+    // Try every possible state field GHIN might use
+    var state = '';
+    if (golfer) {
+      state = golfer.State || golfer.state || golfer.home_state ||
+              golfer.HomeState || golfer.address_state ||
+              golfer.golf_association_state || golfer.stat || '';
+    }
 
-    console.log(`Login success — detected state: "${state}"`);
+    console.log('Login success - state detected: "' + state + '"');
 
     return res.json({
-      token,
-      state,
-      golfer: golfer ? normalizeGolfer(golfer) : null,
-      _debug_golfer_keys: golfer ? Object.keys(golfer) : []  // temp: shows all available fields
+      token:  token,
+      state:  state,
+      golfer: golfer ? normalizeGolfer(golfer) : null
     });
 
   } catch (err) {
@@ -113,71 +117,66 @@ router.post('/login', async (req, res, next) => {
   }
 });
 
-// ── GET /api/ghin/search ────────────────────────────────────────────────────
-// Query params:
-//   ?q=John Smith    — name or GHIN number
-//   ?state=CA        — state code (auto-passed by client after login)
-//   ?per_page=8      — max results (default 8, max 20)
+// GET /api/ghin/search
+// Query: ?q=name or GHIN, ?state=CA, ?per_page=10
 // Header: Authorization: Bearer <token>
-router.get('/search', async (req, res, next) => {
+router.get('/search', async function(req, res, next) {
   try {
-    const token = extractToken(req);
+    var token = extractToken(req);
     if (!token) {
       return res.status(401).json({ error: true, message: 'Authorization token required' });
     }
 
-    const q        = (req.query.q || '').trim();
-    const state    = (req.query.state || '').trim().toUpperCase();
-    const per_page = Math.min(parseInt(req.query.per_page) || 10, 20);
+    var q        = (req.query.q || '').trim();
+    var state    = (req.query.state || '').trim().toUpperCase();
+    var per_page = Math.min(parseInt(req.query.per_page) || 10, 20);
 
     if (!q) {
       return res.status(400).json({ error: true, message: 'Query parameter ?q is required' });
     }
 
-    // Build GHIN search params
-    const params = new URLSearchParams({
-      per_page,
+    var params = new URLSearchParams({
+      per_page: per_page,
       page: 1,
       status: 'Active',
       sorting_criteria: 'last_name',
       order: 'ASC'
     });
 
-    // Scope to state when available — greatly improves result relevance
     if (state) {
       params.set('state', state);
     }
 
-    const isGhinNumber = /^\d+$/.test(q);
+    var isGhinNumber = /^\d+$/.test(q);
     if (isGhinNumber) {
       params.set('golfer_id', q);
       params.set('sorting_criteria', 'id');
-      params.delete('state'); // GHIN number search doesn't need state
+      params.delete('state');
     } else {
-      const parts    = q.split(/\s+/);
-      const lastName = parts[parts.length - 1];
-      const firstName = parts.length > 1 ? parts[0] : '';
+      var parts     = q.split(/\s+/);
+      var lastName  = parts[parts.length - 1];
+      var firstName = parts.length > 1 ? parts[0] : '';
       params.set('last_name', lastName);
       if (firstName) params.set('first_name', firstName);
     }
 
-    console.log(`GHIN search: "${q}" state="${state}" → ${GHIN_BASE}/golfers/search.json?${params}`);
+    console.log('GHIN search: "' + q + '" state="' + state + '"');
 
-    const { ok, status, body } = await ghinFetch(
-      `${GHIN_BASE}/golfers/search.json?${params.toString()}`,
-      { headers: { 'Accept': 'application/json', 'Authorization': `Bearer ${token}` } }
+    var result = await ghinFetch(
+      GHIN_BASE + '/golfers/search.json?' + params.toString(),
+      { headers: { 'Accept': 'application/json', 'Authorization': 'Bearer ' + token } }
     );
 
-    if (!ok) {
-      if (status === 401) {
+    if (!result.ok) {
+      if (result.status === 401) {
         return res.status(401).json({ error: true, message: 'GHIN token expired. Please log in again.' });
       }
-      return res.status(status).json({ error: true, message: 'GHIN search failed', ghin_status: status });
+      return res.status(result.status).json({ error: true, message: 'GHIN search failed' });
     }
 
-    const golfers = (body?.golfers || []).map(normalizeGolfer);
-    console.log(`GHIN search returned ${golfers.length} results`);
-    return res.json({ golfers });
+    var golfers = (result.body && result.body.golfers ? result.body.golfers : []).map(normalizeGolfer);
+    console.log('GHIN search returned ' + golfers.length + ' results');
+    return res.json({ golfers: golfers });
 
   } catch (err) {
     err.detail = 'Error contacting GHIN search endpoint';
@@ -185,32 +184,30 @@ router.get('/search', async (req, res, next) => {
   }
 });
 
-// ── GET /api/ghin/golfer/:ghinNumber ────────────────────────────────────────
-// Fetch a single golfer by GHIN number.
-// Header: Authorization: Bearer <token>
-router.get('/golfer/:ghinNumber', async (req, res, next) => {
+// GET /api/ghin/golfer/:ghinNumber
+router.get('/golfer/:ghinNumber', async function(req, res, next) {
   try {
-    const token = extractToken(req);
+    var token = extractToken(req);
     if (!token) return res.status(401).json({ error: true, message: 'Authorization token required' });
 
-    const { ghinNumber } = req.params;
+    var ghinNumber = req.params.ghinNumber;
     if (!/^\d+$/.test(ghinNumber)) {
       return res.status(400).json({ error: true, message: 'Invalid GHIN number format' });
     }
 
-    const params = new URLSearchParams({ per_page: 1, page: 1, golfer_id: ghinNumber, status: 'Active' });
-    const { ok, status, body } = await ghinFetch(
-      `${GHIN_BASE}/golfers/search.json?${params.toString()}`,
-      { headers: { 'Accept': 'application/json', 'Authorization': `Bearer ${token}` } }
+    var params = new URLSearchParams({ per_page: 1, page: 1, golfer_id: ghinNumber, status: 'Active' });
+    var result = await ghinFetch(
+      GHIN_BASE + '/golfers/search.json?' + params.toString(),
+      { headers: { 'Accept': 'application/json', 'Authorization': 'Bearer ' + token } }
     );
 
-    if (!ok) {
-      if (status === 401) return res.status(401).json({ error: true, message: 'GHIN token expired.' });
-      return res.status(status).json({ error: true, message: 'Golfer lookup failed' });
+    if (!result.ok) {
+      if (result.status === 401) return res.status(401).json({ error: true, message: 'GHIN token expired.' });
+      return res.status(result.status).json({ error: true, message: 'Golfer lookup failed' });
     }
 
-    const golfer = body?.golfers?.[0];
-    if (!golfer) return res.status(404).json({ error: true, message: `No active golfer found with GHIN ${ghinNumber}` });
+    var golfer = result.body && result.body.golfers && result.body.golfers.length > 0 ? result.body.golfers[0] : null;
+    if (!golfer) return res.status(404).json({ error: true, message: 'No active golfer found with GHIN ' + ghinNumber });
     return res.json({ golfer: normalizeGolfer(golfer) });
 
   } catch (err) {
@@ -219,21 +216,20 @@ router.get('/golfer/:ghinNumber', async (req, res, next) => {
   }
 });
 
-// ── GET /api/ghin/health ─────────────────────────────────────────────────────
-// Token validity check. Header: Authorization: Bearer <token>
-router.get('/health', async (req, res, next) => {
+// GET /api/ghin/health
+router.get('/health', async function(req, res, next) {
   try {
-    const token = extractToken(req);
+    var token = extractToken(req);
     if (!token) return res.json({ valid: false, message: 'No token provided' });
 
-    const { ok, status } = await ghinFetch(
-      `${GHIN_BASE}/golfers/search.json?per_page=1&page=1&last_name=Smith&status=Active`,
-      { headers: { 'Accept': 'application/json', 'Authorization': `Bearer ${token}` } }
+    var result = await ghinFetch(
+      GHIN_BASE + '/golfers/search.json?per_page=1&page=1&last_name=Smith&status=Active',
+      { headers: { 'Accept': 'application/json', 'Authorization': 'Bearer ' + token } }
     );
 
-    if (ok) return res.json({ valid: true });
-    if (status === 401) return res.json({ valid: false, message: 'Token expired' });
-    return res.json({ valid: false, message: `GHIN returned ${status}` });
+    if (result.ok) return res.json({ valid: true });
+    if (result.status === 401) return res.json({ valid: false, message: 'Token expired' });
+    return res.json({ valid: false, message: 'GHIN returned ' + result.status });
 
   } catch (err) {
     err.detail = 'Error checking token health';
