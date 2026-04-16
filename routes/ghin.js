@@ -232,4 +232,99 @@ router.get('/health', async function(req, res, next) {
   }
 });
 
+// ── GET /api/ghin/courses ────────────────────────────────────────────────────
+// Search courses by name and optional state
+// Query: ?name=Wolf Creek&state=UT
+// Header: Authorization: Bearer <token>
+router.get('/courses', async function(req, res, next) {
+  try {
+    var token = extractToken(req);
+    if (!token) return res.status(401).json({ error: true, message: 'Authorization token required' });
+
+    var name  = (req.query.name  || '').trim();
+    var state = (req.query.state || '').trim().toUpperCase();
+
+    if (!name) return res.status(400).json({ error: true, message: 'Query parameter ?name is required' });
+
+    var params = new URLSearchParams({ per_page: 10, page: 1, name: name });
+    if (state) params.set('state', state);
+
+    var url = GHIN_BASE + '/courses/search.json?' + params.toString();
+    console.log('GHIN course search: ' + url);
+
+    var result = await ghinFetch(url, {
+      headers: { 'Accept': 'application/json', 'Authorization': 'Bearer ' + token }
+    });
+
+    console.log('GHIN course search HTTP ' + result.status + ' body: ' + JSON.stringify(result.body).slice(0, 300));
+
+    if (!result.ok) {
+      return res.status(result.status).json({ error: true, message: 'Course search failed', ghin_error: result.body });
+    }
+
+    var courses = (result.body && result.body.courses ? result.body.courses : []).map(function(c) {
+      return {
+        id:       c.CourseID || c.course_id || c.id || '',
+        name:     c.CourseName || c.course_name || c.name || '',
+        facility: c.FacilityName || c.facility_name || '',
+        city:     c.City || c.city || '',
+        state:    c.State || c.state || ''
+      };
+    });
+
+    return res.json({ courses: courses });
+
+  } catch (err) {
+    console.error('Course search error: ' + err.message);
+    next(err);
+  }
+});
+
+// ── GET /api/ghin/courses/:courseId/tees ────────────────────────────────────
+// Fetch tee sets (slope + rating) for a specific course
+// Header: Authorization: Bearer <token>
+router.get('/courses/:courseId/tees', async function(req, res, next) {
+  try {
+    var token = extractToken(req);
+    if (!token) return res.status(401).json({ error: true, message: 'Authorization token required' });
+
+    var courseId = req.params.courseId;
+    var url = GHIN_BASE + '/courses/' + courseId + '/tees.json';
+    console.log('GHIN tee fetch: ' + url);
+
+    var result = await ghinFetch(url, {
+      headers: { 'Accept': 'application/json', 'Authorization': 'Bearer ' + token }
+    });
+
+    console.log('GHIN tee fetch HTTP ' + result.status + ' body: ' + JSON.stringify(result.body).slice(0, 500));
+
+    if (!result.ok) {
+      return res.status(result.status).json({ error: true, message: 'Tee lookup failed', ghin_error: result.body });
+    }
+
+    // Normalize tee data — GHIN may return different field names
+    var rawTees = result.body && result.body.tees ? result.body.tees :
+                  result.body && result.body.Tees ? result.body.Tees :
+                  result.body && Array.isArray(result.body) ? result.body : [];
+
+    var tees = rawTees.map(function(t) {
+      return {
+        id:          t.TeeID    || t.tee_id    || t.id     || '',
+        name:        t.TeeName  || t.tee_name  || t.name   || '',
+        gender:      t.Gender   || t.gender    || 'M',
+        holes:       t.Holes    || t.holes     || 18,
+        slope:       parseFloat(t.SlopeRating || t.slope_rating || t.Slope || t.slope || 113),
+        rating:      parseFloat(t.CourseRating || t.course_rating || t.Rating || t.rating || 72),
+        par:         parseFloat(t.Par || t.par || 72)
+      };
+    }).filter(function(t) { return t.holes === 18 || t.holes === '18'; });
+
+    return res.json({ tees: tees, raw: result.body });
+
+  } catch (err) {
+    console.error('Tee fetch error: ' + err.message);
+    next(err);
+  }
+});
+
 module.exports = router;
