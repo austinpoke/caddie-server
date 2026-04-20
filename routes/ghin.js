@@ -1,39 +1,3 @@
-/**
- * routes/ghin.js — GHIN API proxy for Caddie
- *
- * POST /api/ghin/login        - authenticate with GHIN
- * GET  /api/ghin/search       - search golfers by name or GHIN number  
- * GET  /api/ghin/golfer/:id   - fetch single golfer
- * GET  /api/ghin/health       - token validity check
- */
-
-const express = require('express');
-const fetch   = require('node-fetch');
-const router  = express.Router();
-
-const GHIN_BASE = process.env.GHIN_API_BASE || 'https://api.ghin.com/api/v1';
-
-// Fetch from GHIN and parse response
-async function ghinFetch(url, options) {
-  var res  = await fetch(url, options || {});
-  var text = await res.text();
-  var body;
-  try { body = JSON.parse(text); }
-  catch (e) { body = { raw: text }; }
-  return { ok: res.ok, status: res.status, body: body };
-}
-
-// Extract Bearer token from Authorization header
-function extractToken(req) {
-  var auth = req.headers['authorization'] || '';
-  return auth.indexOf('Bearer ') === 0 ? auth.slice(7) : null;
-}
-
-// Normalize golfer object to consistent shape
-function normalizeGolfer(g) {
-  var firstName = g.FirstName  || g.first_name  || '';
-  var lastName  = g.LastName   || g.last_name   || '';
-  var fullName  = g.player_name || (firstName + ' ' + lastName).trim();
   var hcp = 0;
   if (g.handicap_index !== undefined && g.handicap_index !== null) hcp = parseFloat(g.handicap_index);
   else if (g.HandicapIndex !== undefined && g.HandicapIndex !== null) hcp = parseFloat(g.HandicapIndex);
