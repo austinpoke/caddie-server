@@ -188,10 +188,7 @@ router.get('/search', async function(req, res, next) {
       });
     }
 
-    var rawGolfers = result.body && result.body.golfers ? result.body.golfers : [];
-    if (!rawGolfers.length) rawGolfers = result.body && result.body.Golfers ? result.body.Golfers : [];
-    if (!rawGolfers.length) rawGolfers = Array.isArray(result.body) ? result.body : [];
-    var golfers = rawGolfers.map(normalizeGolfer);
+    var golfers = (result.body && result.body.golfers ? result.body.golfers : []).map(normalizeGolfer);
     console.log('GHIN search returned ' + golfers.length + ' golfers');
     return res.json({ golfers: golfers });
 
