@@ -30,13 +30,7 @@ function extractToken(req) {
 }
 
 // Normalize golfer object to consistent shape
-var _loggedOnce = false;
 function normalizeGolfer(g) {
-  // Log complete raw golfer once per server session
-  if (!_loggedOnce) {
-    _loggedOnce = true;
-    console.log('RAW_GOLFER_COMPLETE:', JSON.stringify(g));
-  }
   var firstName = g.FirstName  || g.first_name  || '';
   var lastName  = g.LastName   || g.last_name   || '';
   var fullName  = g.player_name || (firstName + ' ' + lastName).trim();
@@ -194,16 +188,9 @@ router.get('/search', async function(req, res, next) {
       });
     }
 
-    // Log the complete raw body to see exact structure
-    console.log('RAW_BODY_KEYS:', JSON.stringify(Object.keys(result.body || {})));
-    console.log('RAW_BODY_SAMPLE:', JSON.stringify(result.body).slice(0, 1000));
     var rawGolfers = result.body && result.body.golfers ? result.body.golfers : [];
-    // Also check alternate field names GHIN might use
     if (!rawGolfers.length) rawGolfers = result.body && result.body.Golfers ? result.body.Golfers : [];
     if (!rawGolfers.length) rawGolfers = Array.isArray(result.body) ? result.body : [];
-    if (rawGolfers.length > 0) {
-      console.log('RAW_GOLFER_FIELDS:', JSON.stringify(rawGolfers[0]));
-    }
     var golfers = rawGolfers.map(normalizeGolfer);
     console.log('GHIN search returned ' + golfers.length + ' golfers');
     return res.json({ golfers: golfers });
