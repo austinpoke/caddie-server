@@ -1,6 +1,63 @@
+/**
+ * routes/ghin.js — GHIN API proxy for Caddie
+ *
+ * POST /api/ghin/login        - authenticate with GHIN
+ * GET  /api/ghin/search       - search golfers by name or GHIN number  
+ * GET  /api/ghin/golfer/:id   - fetch single golfer
+ * GET  /api/ghin/health       - token validity check
+ */
+
+const express = require('express');
+const fetch   = require('node-fetch');
+const router  = express.Router();
+
+const GHIN_BASE = process.env.GHIN_API_BASE || 'https://api.ghin.com/api/v1';
+
+// Fetch from GHIN and parse response
+async function ghinFetch(url, options) {
+  var res  = await fetch(url, options || {});
+  var text = await res.text();
+  var body;
+  try { body = JSON.parse(text); }
+  catch (e) { body = { raw: text }; }
+  return { ok: res.ok, status: res.status, body: body };
+}
+
+// Extract Bearer token from Authorization header
+function extractToken(req) {
+  var auth = req.headers['authorization'] || '';
+  return auth.indexOf('Bearer ') === 0 ? auth.slice(7) : null;
+}
+
+// Normalize golfer object to consistent shape
+var _loggedOnce = false;
+function normalizeGolfer(g) {
+  // Log complete raw golfer once per server session
+  if (!_loggedOnce) {
+    _loggedOnce = true;
+    console.log('RAW_GOLFER_COMPLETE:', JSON.stringify(g));
+  }
+  var firstName = g.FirstName  || g.first_name  || '';
+  var lastName  = g.LastName   || g.last_name   || '';
+  var fullName  = g.player_name || (firstName + ' ' + lastName).trim();
   var hcp = 0;
-  if (g.handicap_index !== undefined && g.handicap_index !== null) hcp = parseFloat(g.handicap_index);
-  else if (g.HandicapIndex !== undefined && g.HandicapIndex !== null) hcp = parseFloat(g.HandicapIndex);
+  var rawHcp = g.handicap_index !== undefined ? g.handicap_index : 
+               (g.HandicapIndex !== undefined ? g.HandicapIndex : null);
+  if (rawHcp !== null && rawHcp !== undefined) {
+    var rawStr = String(rawHcp).trim();
+    hcp = parseFloat(rawStr);
+    // If raw value is a string starting with "+", it's a plus handicapper
+    // Store as negative so the app can do correct math (e.g. "+1.2" -> -1.2)
+    if (rawStr.startsWith('+') && hcp > 0) {
+      hcp = -hcp;
+    }
+  }
+  // Also check display fields for "+" indicator
+  var hiDisplay = String(g.hi_display || g.handicap_index_display || g.display_handicap_index || 
+                  g.HiDisplay || g.DisplayHandicapIndex || g.handicapDisplay || '').trim();
+  if (hiDisplay.startsWith('+') && hcp > 0) {
+    hcp = -hcp;
+  }
   return {
     name:           fullName,
     first_name:     firstName,
@@ -137,7 +194,17 @@ router.get('/search', async function(req, res, next) {
       });
     }
 
-    var golfers = (result.body && result.body.golfers ? result.body.golfers : []).map(normalizeGolfer);
+    // Log the complete raw body to see exact structure
+    console.log('RAW_BODY_KEYS:', JSON.stringify(Object.keys(result.body || {})));
+    console.log('RAW_BODY_SAMPLE:', JSON.stringify(result.body).slice(0, 1000));
+    var rawGolfers = result.body && result.body.golfers ? result.body.golfers : [];
+    // Also check alternate field names GHIN might use
+    if (!rawGolfers.length) rawGolfers = result.body && result.body.Golfers ? result.body.Golfers : [];
+    if (!rawGolfers.length) rawGolfers = Array.isArray(result.body) ? result.body : [];
+    if (rawGolfers.length > 0) {
+      console.log('RAW_GOLFER_FIELDS:', JSON.stringify(rawGolfers[0]));
+    }
+    var golfers = rawGolfers.map(normalizeGolfer);
     console.log('GHIN search returned ' + golfers.length + ' golfers');
     return res.json({ golfers: golfers });
 
